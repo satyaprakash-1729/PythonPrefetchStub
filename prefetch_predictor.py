@@ -13,6 +13,7 @@ def prefetch_predict(lastNPCs: List[int], lastNAddrs: List[int], topk: int, ROOT
       return 1
 
   idx_to_delta = None
+  # file containing idx --> delta mapping for converting predictions to actual deltas
   with open(ROOT_DIR + 'delta_idx_map.json') as json_file:
     idx_to_delta = json.load(json_file)
 
@@ -20,6 +21,7 @@ def prefetch_predict(lastNPCs: List[int], lastNAddrs: List[int], topk: int, ROOT
   if len(lastNPCs) != N or len(lastNAddrs) != N:
     return -1
 
+  # file containing actual model in JSON format
   f = open(ROOT_DIR + "model_for_cpp.json")
   model = tf.keras.models.model_from_json(f.read())
   f.close()
@@ -33,17 +35,22 @@ def prefetch_predict(lastNPCs: List[int], lastNAddrs: List[int], topk: int, ROOT
   addr21 = 94602865942592.0
   addr22 = 94602868043752.0
 
+  # file containing the model weights
   model.load_weights(ROOT_DIR + "model_for_cpp_weights.h5")
   model.compile(optimizer=tf.keras.optimizers.Adam(lr=0.001), loss='categorical_crossentropy', metrics=['categorical_accuracy'])
   
   center1 = 1.40618487e+14
   center2 = 9.46028667e+13
+
+  # normalize the PCs
   ips = np.array(lastNPCs)
   ips = [(ip-ip1)/(ip2-ip1) for ip in ips]
 
+  # get cluster IDs for the addresses
   addrs = np.array(lastNAddrs)
   cluster_ids = [get_cluster_id(center1, center2, addr) for addr in addrs]
 
+  # normalize addresses cluster wise
   for i in range(len(addrs)):
     if cluster_ids[i] == 0:
       addrs[i] = (addrs[i]-addr11) / (addr12-addr11)
@@ -52,12 +59,16 @@ def prefetch_predict(lastNPCs: List[int], lastNAddrs: List[int], topk: int, ROOT
 
   X = np.array([list(xx) for xx in zip(ips, cluster_ids, addrs)])
   X = X.reshape(1, N, 3)
-  y_pred = model.predict(X)
+  y_pred = model.predict(X)   #predict the delta indices
 
+  # get the top K indices
   topkidxs = y_pred.argsort()[:, -topk:][0]
 
+  # return the list of top k deltas
   return [idx_to_delta[str(idx)] for idx in topkidxs]
   
 
-print(prefetch_predict([9.46887013e-12, 8.85380658e-12, 9.02966590e-12, 9.18332077e-12, 9.31521527e-12],
+
+if __name__ == '__main__':
+  print(prefetch_predict([9.46887013e-12, 8.85380658e-12, 9.02966590e-12, 9.18332077e-12, 9.31521527e-12],
   [0.99999919, 0.99999919, 0.99999926, 0.99999919, 0.99999919], 10))
