@@ -2,6 +2,10 @@ import numpy as np
 import keras
 import json
 from keras_self_attention import SeqSelfAttention
+import os
+import sys
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
 
 def initialize_idx_to_delta(ROOT_DIR="./"):
@@ -18,16 +22,17 @@ def initialize_model(ROOT_DIR="./"):
   model.compile(optimizer=keras.optimizers.Adam(lr=0.001), loss='categorical_crossentropy', metrics=['categorical_accuracy'])
   return model
 
-def prefetch_predict(lastNData) -> int:
-  N = 20
-  if len(lastNData) < 2*N+3:
-    return -1
+def prefetch_predict(lastNData):
+  N = 10
+  if len(lastNData) < 2*N+4:
+    return []
 
   lastNPCs = lastNData[:N]
   lastNAddrs = lastNData[N:2*N]
   topk = lastNData[2*N]
   idx_to_delta = lastNData[2*N+1]
   model = lastNData[2*N+2]
+  LOG2_PAGE_SIZE = lastNData[2*N+3]
 
   ip1 = 4195632.0
   ip2 = 8208480.0
@@ -63,15 +68,29 @@ def prefetch_predict(lastNData) -> int:
   X = X.reshape(1, N, 3)
 
   y_pred = model.predict(X)
-  topkidxs = y_pred.argsort()[:, -topk:][0]
+  idxs = y_pred.argsort()[0]
+  topkidxs = []
+  lastaddr = int(lastNData[2*N-1])
+  for i in range(len(idxs)):
+    if len(topkidxs) == topk:
+      break
+    delta1 = int(idx_to_delta[str(idxs[i])])
+    if ((lastaddr + delta1) >> LOG2_PAGE_SIZE) == (lastaddr >> LOG2_PAGE_SIZE):
+      topkidxs.append(delta1)
 
-  return [idx_to_delta[str(idx)] for idx in topkidxs]
+  return topkidxs
   
-# idx_to_delta = initialize_idx_to_delta()
-# model1 = initialize_model()
-# print(prefetch_predict([6167872, 6628928, 6605932, 6145648, 6524736, 6605932, 6525010, 6525111,
-#  6525202, 6605932, 6159894, 6192705, 6605932, 6173729, 6174606, 4834393, 6605932,
-# 5547136, 6258432, 6605932, 11137690676544, 11137690678848, 11137690748160, 279264050869824,
-#  279264050859840, 11137690748224, 11137690771520, 11137690771584, 11137690771712, 11137690748288,
-#   11137690709504, 11137690705472, 11137690748352, 11137690776576, 11137690777472, 11137690780736,
-#    11137690748416, 11137690711168, 11137690717952, 11137690748480, 10, idx_to_delta, model1]))
+idx_to_delta = initialize_idx_to_delta()
+model1 = initialize_model()
+
+args = []
+args += list(map(int, sys.argv[1].split(",")))
+args += list(map(int, sys.argv[2].split(",")))
+args += [int(sys.argv[3])]
+
+args += [idx_to_delta]
+args += [model1]
+args += [int(sys.argv[4])]
+
+print(prefetch_predict(args))
+
